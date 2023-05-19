@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: machine-config-admission
+  namespace: openshift-machine-config-operator
+  labels:
+    app: machine-config-admission
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: machine-config-admission
+  template:
+    metadata:
+      labels:
+        app: machine-config-admission
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1234
+      containers:
+      - name: server
+        image: quay.io/jkyros/mco-admission-controller:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8443
+          name: mco-webhook
+        volumeMounts:
+        - name: mco-webhook-tls
+          mountPath: /run/secrets/tls
+          readOnly: true
+      volumes:
+      - name: mco-webhook-tls
+        secret:
+          secretName: mco-webhook-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: machine-config-admission
+  namespace: openshift-machine-config-operator
+  annotations: 
+    service.beta.openshift.io/serving-cert-secret-name: mco-webhook-tls
+spec:
+  selector:
+    app: machine-config-admission
+  ports:
+    - port: 443
+      targetPort: mco-webhook
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: machine-config-admission-webhook
+  annotations: 
+     service.beta.openshift.io/inject-cabundle: "true"
+webhooks:
+  - name: machine-config-admission.openshift-machine-config-operator.svc
+    sideEffects: None
+    admissionReviewVersions: ["v1"]
+    clientConfig:
+      service:
+        name: machine-config-admission
+        namespace: openshift-machine-config-operator
+        path: "/mutate"
+    rules:
+      - operations: [ "CREATE","UPDATE" ]
+        apiGroups: ["machineconfiguration.openshift.io"]
+        apiVersions: ["v1"]
+        resources: ["machineconfigs"]
